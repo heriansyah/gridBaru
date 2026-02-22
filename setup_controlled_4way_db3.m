@@ -116,6 +116,20 @@ for lane = 1:4
     fclose(fid);
 end
 
+% Create per-vehicle DB folders (initially copied from current global DB set).
+veh_ids = {'N', 'S', 'E', 'W'};
+for v = 1:numel(veh_ids)
+    vdir = fullfile(DB_DIR, ['veh_', veh_ids{v}]);
+    if ~exist(vdir, 'dir')
+        mkdir(vdir);
+    end
+    for lane = 1:4
+        src = fullfile(DB_DIR, sprintf('dbx_lane%d.csv', lane));
+        dst = fullfile(vdir, sprintf('dbx_lane%d.csv', lane));
+        copyfile(src, dst);
+    end
+end
+
 % -------------------------------------------------------------------------
 % 2) Build simple trajectories (one per approach) for custom + test
 % -------------------------------------------------------------------------
@@ -155,6 +169,27 @@ end
 fclose(fid);
 fclose(fid_test);
 
+% Also generate per-direction test files for quick switching.
+DIR_SET = {'N', 'S', 'E', 'W'};
+for d = 1:numel(DIR_SET)
+    dir_d = DIR_SET{d};
+    man_d = default_test_maneuver(dir_d);
+    name_d = sprintf('Test_4way_%s_to_%s', dir_d, man_d);
+    file_d = fullfile(SCRIPT_DIR, sprintf('test_generated3_%s.csv', dir_d));
+
+    fid_d = fopen(file_d, 'w');
+    if fid_d < 0
+        error('Cannot write %s', file_d);
+    end
+
+    [x_d, y_d] = make_route_xy(dir_d, man_d, GRID);
+    for t = 1:numel(x_d)
+        fprintf(fid_d, '%s,%.3f,%.3f\n', name_d, x_d(t), y_d(t));
+    end
+    fprintf(fid_d, 'SPLIT,NaN,NaN\n');
+    fclose(fid_d);
+end
+
 fprintf('=== CONTROLLED 4-WAY SETUP DONE ===\n');
 fprintf('DB: %s\n', DB_DIR);
 fprintf('custom: %s\n', CUSTOM_FILE);
@@ -163,8 +198,15 @@ fprintf('Active test scenario: %s | dir=%s | maneuver=%s\n', ...
     TEST_NAME, upper(TEST_DIR), lower(TEST_MANEUVER));
 fprintf('Lane states: L1=%d, L2=%d, L3=%d, L4=%d\n', ...
     lane_maps{1}.Count, lane_maps{2}.Count, lane_maps{3}.Count, lane_maps{4}.Count);
+fprintf('Per-vehicle DB folders created: veh_N, veh_S, veh_E, veh_W\n');
 fprintf('\nRun next:\n');
 fprintf('  mygrid3(''predict'', ''%s'', 0, 15, 10)\n', TEST_FILE);
+fprintf('  mygrid3(''predict'', ''%s'', 0, 10, 10, ''%s'')\n', TEST_FILE, fullfile(DB_DIR, 'veh_N'));
+fprintf('\nOr use per-direction files:\n');
+fprintf('  test_generated3_N.csv (N->right)\n');
+fprintf('  test_generated3_S.csv (S->left)\n');
+fprintf('  test_generated3_E.csv (E->right)\n');
+fprintf('  test_generated3_W.csv (W->straight)\n');
 
 
 function p = onehot(idx)
@@ -234,4 +276,17 @@ function [x, y] = make_route_xy(dir_in, maneuver, grid)
 
     x = [x_in, x0, x_out];
     y = [y_in, y0, y_out];
+end
+
+function maneuver = default_test_maneuver(dir_in)
+    switch upper(dir_in)
+        case 'N'
+            maneuver = 'right';
+        case 'S'
+            maneuver = 'left';
+        case 'E'
+            maneuver = 'right';
+        otherwise
+            maneuver = 'straight';
+    end
 end

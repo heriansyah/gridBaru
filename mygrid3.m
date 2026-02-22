@@ -1,9 +1,11 @@
 % mygrid3.m - Grid-based trajectory prediction (Smart + Inertia)
 % Usage:
 %   mygrid3('predict', 'test_generated3.csv', node_id, window, target_distance)
+%   mygrid3('predict', 'test_generated3.csv', node_id, window, target_distance, db_folder)
 
 function exit_code = mygrid3(mode, csv_path, varargin)
     if strcmp(mode, 'predict')
+        db_override = '';
         if numel(varargin) < 3
             node_id = 0; %#ok<NASGU>
             window = 10;
@@ -12,18 +14,33 @@ function exit_code = mygrid3(mode, csv_path, varargin)
             node_id = varargin{1}; %#ok<NASGU>
             window = varargin{2};
             target_distance = varargin{3};
+            if numel(varargin) >= 4
+                db_override = varargin{4};
+            end
         end
 
-        exit_code = run_prediction(csv_path, window, target_distance);
+        exit_code = run_prediction(csv_path, window, target_distance, db_override);
     else
         error('Unknown mode: %s', mode);
     end
 end
 
-function exit_code = run_prediction(csv_path, window, target_distance)
+function exit_code = run_prediction(csv_path, window, target_distance, db_override)
     GRID_SIZE = 10.0;
     SCRIPT_DIR = fileparts(mfilename('fullpath'));
     DB_FOLDER = fullfile(SCRIPT_DIR, 'DB_Generated3');
+    if nargin >= 4 && ~isempty(db_override)
+        if exist(db_override, 'dir')
+            DB_FOLDER = db_override;
+        else
+            db_candidate = fullfile(SCRIPT_DIR, db_override);
+            if exist(db_candidate, 'dir')
+                DB_FOLDER = db_candidate;
+            else
+                error('DB folder not found: %s', db_override);
+            end
+        end
+    end
 
     if ~exist(csv_path, 'file')
         candidate = fullfile(SCRIPT_DIR, csv_path);

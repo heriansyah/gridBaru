@@ -15,3 +15,6 @@ Thumbs.db
 
 # Optional logs/outputs
 *.log
+
+# Keep CSV datasets/versioned outputs tracked
+!*.csv

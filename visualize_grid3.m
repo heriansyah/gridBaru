@@ -1,10 +1,12 @@
-clear;
+clearvars -except TEST_FILE;
 clc;
 close all;
 
 SCRIPT_DIR = fileparts(mfilename('fullpath'));
 DB_FOLDER = fullfile(SCRIPT_DIR, 'DB_Generated3');
-TEST_FILE = fullfile(SCRIPT_DIR, 'test_generated3.csv');
+if ~exist('TEST_FILE', 'var')
+    TEST_FILE = fullfile(SCRIPT_DIR, 'test_generated3.csv');
+end
 TOPOLOGY_FILE = fullfile(SCRIPT_DIR, 'custom_trajectories3.csv');
 
 GRID_SIZE = 10.0;
