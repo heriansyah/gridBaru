@@ -1,0 +1,17 @@
+# MATLAB temp/editor files
+*.asv
+*.m~
+*.autosave
+slprj/
+
+# MATLAB data/session artifacts
+*.mat
+*.fig
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Optional logs/outputs
+*.log

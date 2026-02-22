@@ -1,0 +1,8 @@
+SmartGrid3 synthetic 4-way generation summary
+Duration(s): 50
+dt(s): 1.0
+Approach length to center (m): 200.0
+Train per approach: 10
+Train left/straight/right per approach: 5/3/2
+Total train runs: 40
+Test trajectory: Test_4way_Veh_001_left | approach=south maneuver=left
