@@ -1,13 +1,25 @@
-clearvars -except TEST_FILE;
+clearvars -except TEST_FILE DB_FOLDER TOPOLOGY_KIND;
 clc;
 close all;
 
 SCRIPT_DIR = fileparts(mfilename('fullpath'));
-DB_FOLDER = fullfile(SCRIPT_DIR, 'DB_Generated3');
+if ~exist('DB_FOLDER', 'var')
+    DB_FOLDER = fullfile(SCRIPT_DIR, 'DB_Generated3');
+elseif exist(DB_FOLDER, 'dir') ~= 7
+    db_candidate = fullfile(SCRIPT_DIR, DB_FOLDER);
+    if exist(db_candidate, 'dir') == 7
+        DB_FOLDER = db_candidate;
+    else
+        error('DB folder not found: %s', DB_FOLDER);
+    end
+end
 if ~exist('TEST_FILE', 'var')
     TEST_FILE = fullfile(SCRIPT_DIR, 'test_generated3.csv');
 end
 TOPOLOGY_FILE = fullfile(SCRIPT_DIR, 'custom_trajectories3.csv');
+if ~exist('TOPOLOGY_KIND', 'var')
+    TOPOLOGY_KIND = '4way'; % '4way' | 't' | 'y'
+end
 
 GRID_SIZE = 10.0;
 WINDOW = 10;
@@ -28,6 +40,7 @@ CAR_WIDTH_M = 1.8;
 fprintf('=== VISUALIZE GRID PREDICTION ===\n');
 fprintf('Test file: %s\n', TEST_FILE);
 fprintf('DB folder: %s\n', DB_FOLDER);
+fprintf('Topology kind: %s\n', TOPOLOGY_KIND);
 if SHOW_TOPOLOGY
     fprintf('Topology file: %s\n', TOPOLOGY_FILE);
 end
@@ -72,9 +85,10 @@ end
 
 % Prefer explicit road geometry (solid) when available.
 topo_model = [];
-if SHOW_TOPOLOGY && exist(fullfile(SCRIPT_DIR, 'topology_4way3.m'), 'file') == 2
+topo_fn = topology_function_name(TOPOLOGY_KIND);
+if SHOW_TOPOLOGY && exist(fullfile(SCRIPT_DIR, [topo_fn, '.m']), 'file') == 2
     try
-        topo_model = topology_4way3();
+        topo_model = feval(topo_fn);
     catch
         topo_model = [];
     end
@@ -341,14 +355,22 @@ fprintf('Exact accuracy:  %.2f%%\n', 100 * hits / max(total, 1));
 
 
 function draw_grid_mesh(ax, gx_min, gx_max, gy_min, gy_max, step)
-    for gx = gx_min:step:gx_max
+    gx_vals = unique([gx_min:step:gx_max, gx_max]);
+    gy_vals = unique([gy_min:step:gy_max, gy_max]);
+
+    for gx = gx_vals
         plot(ax, [gx gx], [gy_min gy_max], '-', ...
             'Color', [1.00 0.25 0.25], 'LineWidth', 0.9, 'HandleVisibility', 'off');
     end
-    for gy = gy_min:step:gy_max
+    for gy = gy_vals
         plot(ax, [gx_min gx_max], [gy gy], '-', ...
             'Color', [1.00 0.25 0.25], 'LineWidth', 0.9, 'HandleVisibility', 'off');
     end
+
+    % Ensure the outer border is closed.
+    rectangle(ax, 'Position', [gx_min, gy_min, gx_max - gx_min, gy_max - gy_min], ...
+        'EdgeColor', [1.00 0.25 0.25], 'LineWidth', 1.0, 'LineStyle', '-', ...
+        'HandleVisibility', 'off');
 end
 
 function draw_topology_grid(ax, topo_model, grid_size)
@@ -366,6 +388,17 @@ function draw_topology_grid(ax, topo_model, grid_size)
         lgy = lm(:,2) ./ grid_size + 1;
         plot(ax, lgx, lgy, '--', 'Color', [0.55 0.55 0.55], ...
             'LineWidth', 1.0, 'HandleVisibility', 'off');
+    end
+end
+
+function fn = topology_function_name(kind)
+    k = lower(string(kind));
+    if k == "t"
+        fn = 'topology_t3';
+    elseif k == "y"
+        fn = 'topology_y3';
+    else
+        fn = 'topology_4way3';
     end
 end
 

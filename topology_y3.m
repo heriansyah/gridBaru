@@ -7,6 +7,9 @@ half_width = lane_width * lanes_per_direction;
 road_half = half_width * 2;
 
 split_pt = [0, 0];
+% Match controlled Y movement extent:
+% - branch length ~170 m
+% - south stem length ~220 m
 stem_bottom = [0, -220];
 left_tip = [-170, 170];
 right_tip = [170, 170];
@@ -26,7 +29,7 @@ topo = struct();
 topo.name = 'intersection_y';
 topo.road_poly = polyY;
 topo.lane_markings = markY;
-topo.bounds = [-220 220 -220 220];
+topo.bounds = [-220 220 -240 220];
 topo.meta = struct('lane_width', lane_width, ...
                    'lanes_per_direction', lanes_per_direction);
 end
