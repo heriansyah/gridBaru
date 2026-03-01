@@ -2,68 +2,55 @@ clear;
 clc;
 
 % ------------------------------------------------------------
-% SmartGrid3 synthetic generator (4-way only for phase-1)
-% - Grid size: 10m
-% - Approach length to center: 200m (20 grids)
-% - Training maneuver distribution per approach: 50/30/20
+% Generate 10 test scenarios for 4-way turns (left/straight/right).
+% Output is only for evaluation of turn accuracy at intersection.
 % ------------------------------------------------------------
 SCRIPT_DIR = fileparts(mfilename('fullpath'));
-OUT_CSV = fullfile(SCRIPT_DIR, 'custom_trajectories3.csv');
-OUT_SUMMARY = fullfile(SCRIPT_DIR, 'custom_trajectories3_summary.txt');
+OUT_CSV = fullfile(SCRIPT_DIR, 'test_intersection_4way3.csv');
 
-DURATION_S = 50;
+DURATION_S = 40;
 DT = 1.0;
 TIMES = (0:DT:DURATION_S)';
 
-APPROACH_LEN_M = 200;  % 20 grids with 10m grid size
+APPROACH_LEN_M = 200;
 TURN_RADIUS_HINT = 20;
 
-P_LEFT = 0.50;
-P_STRAIGHT = 0.30;
-P_RIGHT = 0.20;
-N_TRAIN_PER_APPROACH = 10;   % total train runs = 40
+% 100 scenarios (balanced across approaches/turns as much as possible).
+N_SCENARIOS = 100;
+base_cases = {
+    'north', 'left';
+    'north', 'straight';
+    'north', 'right';
+    'south', 'left';
+    'south', 'straight';
+    'south', 'right';
+    'east',  'left';
+    'east',  'straight';
+    'east',  'right';
+    'west',  'left';
+    'west',  'straight';
+    'west',  'right'
+};
 
-TEST_APPROACH = 'south';
-TEST_MANEUVER = 'left';
-
-approaches = {'south', 'north', 'west', 'east'};
-
-fprintf('=== GENERATE SYNTHETIC 4-WAY DATA (SMARTGRID3) ===\n');
-fprintf('Duration: %d s, dt: %.1f s\n', DURATION_S, DT);
-fprintf('Approach length: %.1f m (~%.1f grids)\n', APPROACH_LEN_M, APPROACH_LEN_M/10);
-
-n_left = round(N_TRAIN_PER_APPROACH * P_LEFT);
-n_straight = round(N_TRAIN_PER_APPROACH * P_STRAIGHT);
-n_right = N_TRAIN_PER_APPROACH - n_left - n_straight;
+rng(123);
+reps = ceil(N_SCENARIOS / size(base_cases, 1));
+cases = repmat(base_cases, reps, 1);
+idx = randperm(size(cases, 1));
+cases = cases(idx, :);
+cases = cases(1:N_SCENARIOS, :);
 
 rows = cell(0, 4);
-run_id = 0;
-
-for a = 1:numel(approaches)
-    approach = approaches{a};
-    maneuvers = [repmat({'left'}, n_left, 1); ...
-                repmat({'straight'}, n_straight, 1); ...
-                repmat({'right'}, n_right, 1)];
-
-    rng(100 + a);
-    maneuvers = maneuvers(randperm(numel(maneuvers)));
-
-    for i = 1:numel(maneuvers)
-        run_id = run_id + 1;
-        mv = maneuvers{i};
-        xy = generate_route_4way(approach, mv, TIMES, APPROACH_LEN_M, TURN_RADIUS_HINT, true);
-        scenario = sprintf('Train_4way_%s_Run_%03d_%s', approach, i, mv);
-        rows = append_rows(rows, scenario, TIMES, xy);
-    end
+for i = 1:size(cases, 1)
+    approach = cases{i, 1};
+    maneuver = cases{i, 2};
+    scenario = sprintf('Test_4way_%s_%s_%02d', approach, maneuver, i);
+    xy = generate_route_4way(approach, maneuver, TIMES, APPROACH_LEN_M, TURN_RADIUS_HINT, false);
+    rows = append_rows(rows, scenario, TIMES, xy);
 end
 
-xy_test = generate_route_4way(TEST_APPROACH, TEST_MANEUVER, TIMES, APPROACH_LEN_M, TURN_RADIUS_HINT, false);
-rows = append_rows(rows, 'Test_4way_Veh_001_left', TIMES, xy_test);
-
-% Write CSV
 fid = fopen(OUT_CSV, 'w');
 if fid < 0
-    error('Cannot write output file: %s', OUT_CSV);
+    error('Cannot write %s', OUT_CSV);
 end
 fprintf(fid, 'scenario,timestamp,x,y\n');
 for i = 1:size(rows, 1)
@@ -71,23 +58,7 @@ for i = 1:size(rows, 1)
 end
 fclose(fid);
 
-% Write summary
-fid = fopen(OUT_SUMMARY, 'w');
-if fid > 0
-    fprintf(fid, 'SmartGrid3 synthetic 4-way generation summary\n');
-    fprintf(fid, 'Duration(s): %d\n', DURATION_S);
-    fprintf(fid, 'dt(s): %.1f\n', DT);
-    fprintf(fid, 'Approach length to center (m): %.1f\n', APPROACH_LEN_M);
-    fprintf(fid, 'Train per approach: %d\n', N_TRAIN_PER_APPROACH);
-    fprintf(fid, 'Train left/straight/right per approach: %d/%d/%d\n', n_left, n_straight, n_right);
-    fprintf(fid, 'Total train runs: %d\n', numel(approaches) * N_TRAIN_PER_APPROACH);
-    fprintf(fid, 'Test trajectory: %s | approach=%s maneuver=%s\n', 'Test_4way_Veh_001_left', TEST_APPROACH, TEST_MANEUVER);
-    fclose(fid);
-end
-
-fprintf('Saved: %s\n', OUT_CSV);
-fprintf('Summary: %s\n', OUT_SUMMARY);
-fprintf('Next: run visualize_generated_4way3.m to verify movement.\n');
+fprintf('Generated 10 test scenarios: %s\n', OUT_CSV);
 
 
 function rows = append_rows(rows, scenario, times, xy)
@@ -99,7 +70,6 @@ end
 function xy = generate_route_4way(approach, maneuver, times, approach_len, turn_radius_hint, with_noise)
     center = [0, 0];
 
-    % Direction vectors: "to center" for each approach
     switch lower(approach)
         case 'south'
             u_in = [0, 1];
@@ -117,10 +87,8 @@ function xy = generate_route_4way(approach, maneuver, times, approach_len, turn_
             error('Unknown approach: %s', approach);
     end
 
-    % Start point is 200m from center in incoming direction opposite
     p_start = center - u_in * approach_len + lane_offset;
 
-    % Outgoing direction by maneuver
     switch lower(maneuver)
         case 'straight'
             u_out = u_in;
@@ -138,13 +106,13 @@ function xy = generate_route_4way(approach, maneuver, times, approach_len, turn_
     p_out = center + u_out * turn_radius_hint + lane_offset;
 
     if strcmpi(maneuver, 'straight')
-        base = [linspace(p_start(1), p_end(1), 320)', linspace(p_start(2), p_end(2), 320)'];
+        base = [linspace(p_start(1), p_end(1), 260)', linspace(p_start(2), p_end(2), 260)'];
     else
-        seg1 = [linspace(p_start(1), p_in(1), 140)', linspace(p_start(2), p_in(2), 140)'];
+        seg1 = [linspace(p_start(1), p_in(1), 120)', linspace(p_start(2), p_in(2), 120)'];
         c1 = p_in + u_in * 10;
         c2 = p_out - u_out * 10;
-        bez = bezier2d(p_in, c1, c2, p_out, 90);
-        seg2 = [linspace(p_out(1), p_end(1), 140)', linspace(p_out(2), p_end(2), 140)'];
+        bez = bezier2d(p_in, c1, c2, p_out, 80);
+        seg2 = [linspace(p_out(1), p_end(1), 120)', linspace(p_out(2), p_end(2), 120)'];
         base = [seg1; bez; seg2];
     end
 

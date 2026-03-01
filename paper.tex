@@ -1,0 +1,83 @@
+\documentclass[conference]{IEEEtran}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{hyperref}
+
+\title{Prediksi Manuver Belok di Persimpangan 4-Arah Berbasis Perilaku}
+\author{\IEEEauthorblockN{GridBaru Project}}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Makalah ini membahas prediksi manuver di persimpangan 4-arah dengan fokus pada keputusan belok (kiri/lurus/kanan), bukan akurasi koordinat. Metode yang diusulkan menggabungkan probabilitas berbasis sel grid di area persimpangan dengan pembacaan perilaku kendaraan (perlambatan dan pergeseran lateral). Hasil uji pada dataset sintetis menunjukkan bahwa penambahan fitur perilaku membantu memperjelas keputusan manuver ketika informasi heading semata tidak cukup.
+\end{abstract}
+
+\begin{IEEEkeywords}
+intersection prediction, behavior cues, lateral drift, slowdown, grid-based model
+\end{IEEEkeywords}
+
+\section{Pendahuluan}
+Metode prediksi lintasan berbasis heading dan kecepatan sering gagal menangkap keputusan manuver di persimpangan karena sinyal heading yang ambigu menjelang titik belok. Pada kondisi mendekati persimpangan, variasi kecil pada heading dapat menghasilkan prediksi yang tidak stabil, sementara kecepatan rata-rata belum cukup untuk membedakan niat belok. Oleh karena itu diperlukan pembacaan perilaku kendaraan yang lebih kaya, seperti pola perlambatan ketika akan belok dan pergeseran posisi lateral menuju lajur tujuan. Makalah ini menyajikan pendekatan prediksi manuver persimpangan dengan menambahkan indikator perilaku agar keputusan belok lebih konsisten.
+
+\section{Metodologi}
+Metode diusulkan berfokus pada prediksi manuver di area persimpangan dan mengabaikan akurasi koordinat grid di luar area tersebut. Alur utama terdiri dari: (1) pembangunan basis probabilitas per lajur di sel persimpangan, (2) ekstraksi isyarat perilaku dari lintasan, (3) fusi probabilitas untuk keputusan akhir.
+
+\subsection{Basis Probabilitas Persimpangan}
+Lintasan pelatihan diproyeksikan ke grid ukuran $10$~m. Untuk setiap lajur masuk, dihitung frekuensi transisi belok kiri/lurus/kanan pada sel grid sekitar pusat persimpangan. Frekuensi dinormalisasi menjadi probabilitas dasar $\mathbf{p}_{\text{base}}=[p_L,p_S,p_R]$ per lajur.
+
+\subsection{Isyarat Perilaku Kendaraan}
+Dua isyarat perilaku diekstraksi dari lintasan:
+\begin{itemize}
+\item \textbf{Perlambatan} ($r_v$): rasio kecepatan di sekitar pusat persimpangan terhadap kecepatan sebelum persimpangan. Rasio rendah mengindikasikan niat belok.
+\item \textbf{Pergeseran lateral} ($\Delta_{lat}$): perubahan rata-rata posisi lateral relatif terhadap arah gerak masuk. Pergeseran ke kiri/kanan mengindikasikan manuver belok kiri/kanan.
+\end{itemize}
+Bobot perilaku dihitung sebagai:
+\begin{align}
+ w_{slow} &= \text{clip}\big((1-r_v)\,g_s,\,0,\,0.6\big) \\
+ w_{drift} &= \text{clip}\big(|\Delta_{lat}|/d_{ref}\cdot g_d,\,0,\,0.6\big)
+\end{align}
+Di sini, $g_s$ (\textit{slow gain}) mengontrol sensitivitas terhadap perlambatan, $g_d$ (\textit{drift gain}) mengontrol sensitivitas terhadap pergeseran lateral, dan $d_{ref}$ adalah referensi pergeseran lateral tipikal (misal lebar lajur). Operator \textit{clip} membatasi bobot agar tidak mendominasi probabilitas dan menjaga stabilitas.
+
+\subsection{Bias Perilaku}
+Probabilitas bias perilaku $\mathbf{p}_{\text{bias}}$ dibangun dari $w_{slow}$ dan $w_{drift}$. Perlambatan meningkatkan peluang belok (kiri/kanan) dibanding lurus, sementara arah drift menggeser probabilitas ke kiri atau kanan:
+\begin{align}
+\mathbf{p}_{\text{bias}} &= \big[0.5w_{slow},\;1-w_{slow},\;0.5w_{slow}\big] \\
+\text{Jika } \Delta_{lat} &> 0:\; p_L \leftarrow p_L + w_{drift},\; p_R \leftarrow \max(p_R-w_{drift},0) \\
+\text{Jika } \Delta_{lat} &< 0:\; p_R \leftarrow p_R + w_{drift},\; p_L \leftarrow \max(p_L-w_{drift},0)
+\end{align}
+Setelah penyesuaian, $\mathbf{p}_{\text{bias}}$ dinormalisasi agar jumlahnya $1$.
+
+\subsection{Pengaruh Parameter Slow Gain dan Drift Gain}
+Nilai $g_s$ memperbesar atau memperkecil dampak perlambatan terhadap peluang belok. Jika $g_s$ diperbesar, $w_{slow}$ naik lebih cepat saat kendaraan melambat, sehingga probabilitas belok meningkat dan probabilitas lurus turun lebih agresif. Dampaknya, sistem lebih peka terhadap niat belok, tetapi berisiko salah mengklasifikasikan kendaraan yang melambat karena faktor lain (misal kepadatan). Sebaliknya, jika $g_s$ diperkecil, kontribusi perlambatan melemah dan model cenderung mempertahankan prediksi lurus ketika sinyal perlambatan tidak terlalu kuat.
+
+Nilai $g_d$ mengatur seberapa kuat pergeseran lateral mempengaruhi keputusan kiri/kanan. Jika $g_d$ diperbesar, sedikit perpindahan lateral sudah cukup untuk menggeser probabilitas ke arah belok kiri/kanan, sehingga keputusan menjadi lebih ``tegas'' terhadap arah drift. Namun, nilai terlalu besar dapat menyebabkan prediksi terlalu sensitif terhadap noise posisi. Jika $g_d$ diperkecil, efek drift menjadi lemah dan prediksi lebih mengikuti $\mathbf{p}_{\text{base}}$ atau komponen perlambatan, sehingga belokan bisa kurang terdeteksi ketika perpindahan lateral halus.
+
+\subsection{Fusi dan Keputusan}
+Probabilitas akhir dihitung dengan fusi linear:
+\begin{equation}
+\mathbf{p}_{\text{final}} = (1-\alpha)\,\mathbf{p}_{\text{base}} + \alpha\,\mathbf{p}_{\text{bias}}
+\end{equation}
+Keputusan manuver diambil sebagai $\arg\max\mathbf{p}_{\text{final}}$.
+
+\section{Pembuatan Data}
+Dataset sintetis dibangun dengan aturan perilaku:
+\begin{itemize}
+\item Saat belok, kendaraan melambat di dekat persimpangan.
+\item Saat belok kiri/kanan, kendaraan berpindah secara lateral ke lajur tujuan.
+\item Saat lurus, posisi relatif stabil dengan pergeseran lateral minimal.
+\end{itemize}
+Sebanyak 100 skenario uji dihasilkan dari kombinasi arah masuk dan manuver.
+
+\section{Evaluasi}
+Evaluasi dilakukan khusus di area persimpangan dengan metrik akurasi manuver (kiri/lurus/kanan). Pendekatan ini menilai konsistensi keputusan belok tanpa menghitung kesalahan koordinat grid.
+
+\section{Hasil dan Diskusi}
+Hasil menunjukkan bahwa pembacaan perilaku memperbaiki stabilitas prediksi di persimpangan. Perlambatan meningkatkan pembedaan belok vs lurus, sedangkan pergeseran lateral memperkuat arah belok. Kegagalan terjadi ketika probabilitas dasar terlalu dominan atau sinyal drift lemah.
+
+\section{Kesimpulan}
+Prediksi belok di persimpangan tidak cukup hanya mengandalkan heading dan kecepatan rata-rata. Pendekatan berbasis perilaku yang memanfaatkan perlambatan dan pergeseran lateral memberikan keputusan yang lebih konsisten. Ke depan, integrasi data nyata dan kalibrasi parameter perilaku menjadi langkah penting untuk meningkatkan generalisasi.
+
+\end{document}
