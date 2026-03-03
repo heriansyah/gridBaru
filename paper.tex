@@ -28,6 +28,17 @@ Metode diusulkan berfokus pada prediksi manuver di area persimpangan dan mengaba
 \subsection{Basis Probabilitas Persimpangan}
 Lintasan pelatihan diproyeksikan ke grid ukuran $10$~m. Untuk setiap lajur masuk, dihitung frekuensi transisi belok kiri/lurus/kanan pada sel grid sekitar pusat persimpangan. Frekuensi dinormalisasi menjadi probabilitas dasar $\mathbf{p}_{\text{base}}=[p_L,p_S,p_R]$ per lajur.
 
+\subsection{Penyimpanan Database Probabilitas}
+Probabilitas per sel disimpan sebagai basis data sederhana berbentuk berkas CSV per lajur. Setiap baris menyimpan \textit{grid id} dan vektor probabilitas 9-arah, dengan hanya tiga komponen (kiri/lurus/kanan) yang bernilai non-nol. \textit{Grid id} dihitung dari koordinat sel $(g_x,g_y)$ menggunakan:
+\begin{equation}
+gid = (g_y-1)\cdot 2000 + (g_x-1)
+\end{equation}
+Format baris penyimpanan adalah:
+\begin{equation}
+gid,\;p_1,\;p_2,\;...,\;p_9
+\end{equation}
+Dengan demikian, proses pembacaan di tahap inferensi cukup melakukan pencarian berdasarkan $gid$ pada berkas \texttt{dbx\_lane\{1..4\}.csv}. Struktur ini ringan dan mudah diinspeksi, serta memungkinkan pembaruan per lajur tanpa memuat keseluruhan basis data.
+
 \subsection{Isyarat Perilaku Kendaraan}
 Dua isyarat perilaku diekstraksi dari lintasan:
 \begin{itemize}
