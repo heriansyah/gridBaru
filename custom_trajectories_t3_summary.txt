@@ -1,0 +1,6 @@
+SmartGrid3 synthetic T-generation summary
+Duration(s): 50
+dt(s): 1.0
+Approach length to center (m): 200.0
+Train per approach: 12
+Test trajectory: Test_t | approach=S maneuver=left

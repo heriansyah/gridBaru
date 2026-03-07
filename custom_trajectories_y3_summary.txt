@@ -1,0 +1,7 @@
+SmartGrid3 synthetic Y-generation summary
+Duration(s): 50
+dt(s): 1.0
+Stem length (m): 220.0
+Branch length (m): 170.0
+Train per approach: 12
+Test trajectory: Test_y | approach=S maneuver=left

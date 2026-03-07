@@ -2,59 +2,53 @@ clear;
 clc;
 
 % ------------------------------------------------------------
-% Evaluate turn accuracy at intersection only (left/straight/right).
-% This ignores exact coordinate accuracy.
+% Evaluate turn accuracy at T-intersection only (left/straight/right).
 % ------------------------------------------------------------
 SCRIPT_DIR = fileparts(mfilename('fullpath'));
-TEST_FILE = fullfile(SCRIPT_DIR, 'test_intersection_4way3.csv');
-DB_FOLDER = fullfile(SCRIPT_DIR, 'DB_Intersection4way3');
+TEST_FILE = fullfile(SCRIPT_DIR, 'test_intersection_t3.csv');
+DB_FOLDER = fullfile(SCRIPT_DIR, 'DB_T3');
 
 GRID_SIZE = 10.0;
 INTERSECTION_RADIUS_M = 25;
 PRE_POST_WINDOW = 12;
 TURN_ANGLE_THRESH_DEG = 35;
 MIN_POINTS = 8;
-INERTIA_ALPHA = 0.9;
+INERTIA_ALPHA = 0.45;
 LANE_SHIFT_REF_M = 1.2;
-
-SLOW_GAIN = 2;
+SLOW_GAIN = 1.0;
 DRIFT_GAIN = 0.6;
-ALLOW_NO_DB = true;      % allow heuristic-only prediction when DB is missing
-FORCE_NO_DB = false;     % set true to ignore DB even if it exists
-NO_DB_BASE = [0.25, 0.5, 0.25]; % left/straight/right prior (no training)
 
 if ~exist(TEST_FILE, 'file')
-    error('Test file not found: %s', TEST_FILE);
+    alt = fullfile(SCRIPT_DIR, 'test_generated_t3.csv');
+    if exist(alt, 'file')
+        TEST_FILE = alt;
+    else
+        alt = fullfile(SCRIPT_DIR, 'custom_trajectories_t3.csv');
+        if exist(alt, 'file')
+            TEST_FILE = alt;
+        else
+            error('Test file not found: %s', TEST_FILE);
+        end
+    end
 end
-use_db = exist(DB_FOLDER, 'dir') == 7 && ~FORCE_NO_DB;
-if ~use_db && ~ALLOW_NO_DB
+if ~exist(DB_FOLDER, 'dir')
     error('DB folder not found: %s', DB_FOLDER);
 end
 
-fprintf('=== EVAL INTERSECTION TURN ACCURACY (4-WAY) ===\n');
+fprintf('=== EVAL INTERSECTION TURN ACCURACY (T) ===\n');
 fprintf('Test file: %s\n', TEST_FILE);
-if use_db
-    fprintf('DB folder: %s\n', DB_FOLDER);
-else
-    fprintf('DB folder: (not used) -> heuristic-only mode\n');
-end
+fprintf('DB folder: %s\n', DB_FOLDER);
 fprintf('Radius: %.1f m, Window: %d, Angle thresh: %.1f deg\n\n', ...
     INTERSECTION_RADIUS_M, PRE_POST_WINDOW, TURN_ANGLE_THRESH_DEG);
 
 tracks = load_tracks_by_scenario(TEST_FILE);
-if use_db
-    db = load_database(DB_FOLDER);
-else
-    db = cell(4, 1);
-end
+db = load_database(DB_FOLDER);
 
 labels = {'left', 'straight', 'right'};
 conf = zeros(3, 3);
 total = 0;
 correct = 0;
 skipped = 0;
-db_hits = 0;
-no_db_used = 0;
 
 for s = 1:numel(tracks)
     xy = tracks{s}.xy;
@@ -81,50 +75,38 @@ for s = 1:numel(tracks)
     heading = mod(atan2(v_in(1), v_in(2)) * 180 / pi, 360);
     lane = lane_from_heading(heading);
 
-    actual = turn_from_vectors(v_in, v_out, TURN_ANGLE_THRESH_DEG);
+    actual = turn_from_label(tracks{s}.scenario);
+    if isempty(actual)
+        actual = turn_from_vectors(v_in, v_out, TURN_ANGLE_THRESH_DEG);
+    end
     if isempty(actual)
         skipped = skipped + 1;
         continue;
     end
 
-    % Use closest-to-center point as intersection grid cell.
     gx = floor(x(idx0) / GRID_SIZE) + 1;
     gy = floor(y(idx0) / GRID_SIZE) + 1;
     gid = int32((gy - 1) * 2000 + (gx - 1));
 
-    pred = '';
-    if use_db
-        pred = predict_turn_with_inertia( ...
-            db{lane}, gid, lane, x, y, idx0, v_in, ...
-            INERTIA_ALPHA, LANE_SHIFT_REF_M, SLOW_GAIN, DRIFT_GAIN);
-        if isempty(pred)
-            % Fallback: search any point within radius that exists in DB.
-            in_mask = d <= INTERSECTION_RADIUS_M;
-            if any(in_mask)
-                gx2 = floor(x(in_mask) / GRID_SIZE) + 1;
-                gy2 = floor(y(in_mask) / GRID_SIZE) + 1;
-                gids = int32((gy2 - 1) * 2000 + (gx2 - 1));
-                for k = 1:numel(gids)
-                    pred = predict_turn_with_inertia( ...
-                        db{lane}, gids(k), lane, x, y, idx0, v_in, ...
-                        INERTIA_ALPHA, LANE_SHIFT_REF_M, SLOW_GAIN, DRIFT_GAIN);
-                    if ~isempty(pred)
-                        break;
-                    end
+    pred = predict_turn_with_inertia( ...
+        db{lane}, gid, lane, x, y, idx0, v_in, ...
+        INERTIA_ALPHA, LANE_SHIFT_REF_M, SLOW_GAIN, DRIFT_GAIN);
+    if isempty(pred)
+        % Fallback: search any point within radius that exists in DB.
+        in_mask = d <= INTERSECTION_RADIUS_M;
+        if any(in_mask)
+            gx2 = floor(x(in_mask) / GRID_SIZE) + 1;
+            gy2 = floor(y(in_mask) / GRID_SIZE) + 1;
+            gids = int32((gy2 - 1) * 2000 + (gx2 - 1));
+            pred = '';
+            for k = 1:numel(gids)
+                pred = predict_turn_with_inertia( ...
+                    db{lane}, gids(k), lane, x, y, idx0, v_in, ...
+                    INERTIA_ALPHA, LANE_SHIFT_REF_M, SLOW_GAIN, DRIFT_GAIN);
+                if ~isempty(pred)
+                    break;
                 end
             end
-        end
-        if ~isempty(pred)
-            db_hits = db_hits + 1;
-        end
-    end
-
-    if isempty(pred) && ALLOW_NO_DB
-        pred = predict_turn_no_db( ...
-            x, y, idx0, v_in, NO_DB_BASE, INERTIA_ALPHA, ...
-            LANE_SHIFT_REF_M, SLOW_GAIN, DRIFT_GAIN);
-        if ~isempty(pred)
-            no_db_used = no_db_used + 1;
         end
     end
 
@@ -150,10 +132,6 @@ fprintf('Total evaluated: %d\n', total);
 fprintf('Correct: %d\n', correct);
 fprintf('Accuracy: %.2f%%\n', 100 * correct / max(total, 1));
 fprintf('Skipped: %d\n', skipped);
-if ALLOW_NO_DB
-    fprintf('DB hits: %d\n', db_hits);
-    fprintf('Heuristic-only: %d\n', no_db_used);
-end
 fprintf('\nConfusion matrix (rows=actual, cols=pred):\n');
 fprintf('           left  straight  right\n');
 for i = 1:3
@@ -173,6 +151,19 @@ function v = mean_vec(x, y, i1, i2)
         return;
     end
     v = [mean(dx), mean(dy)];
+end
+
+function t = turn_from_label(sid)
+    s = lower(sid);
+    if contains(s, 'left')
+        t = 'left';
+    elseif contains(s, 'right')
+        t = 'right';
+    elseif contains(s, 'straight')
+        t = 'straight';
+    else
+        t = '';
+    end
 end
 
 function t = turn_from_vectors(v_in, v_out, thresh_deg)
@@ -218,24 +209,6 @@ function lane = lane_from_heading(heading_deg)
     end
 end
 
-function pred = predict_turn_from_db(map, gid, lane)
-    pred = '';
-    if ~isKey(map, gid)
-        return;
-    end
-    probs = map(gid);
-    [left_idx, straight_idx, right_idx] = lane_turn_indices(lane);
-    p = [probs(left_idx), probs(straight_idx), probs(right_idx)];
-    [~, imax] = max(p);
-    if imax == 1
-        pred = 'left';
-    elseif imax == 2
-        pred = 'straight';
-    else
-        pred = 'right';
-    end
-end
-
 function pred = predict_turn_with_inertia(map, gid, lane, x, y, idx0, v_in, alpha, lane_shift_ref, slow_gain, drift_gain)
     pred = '';
     if ~isKey(map, gid)
@@ -244,39 +217,6 @@ function pred = predict_turn_with_inertia(map, gid, lane, x, y, idx0, v_in, alph
     probs = map(gid);
     [left_idx, straight_idx, right_idx] = lane_turn_indices(lane);
     p_base = [probs(left_idx), probs(straight_idx), probs(right_idx)];
-
-    [speed_ratio, lat_delta] = motion_cues(x, y, idx0, v_in);
-    slow_w = clamp_value((1 - speed_ratio) * slow_gain, 0, 0.6);
-    drift_w = clamp_value((abs(lat_delta) / max(lane_shift_ref, 1e-6)) * drift_gain, 0, 0.6);
-
-    p_bias = [0.5 * slow_w, 1 - slow_w, 0.5 * slow_w];
-    if lat_delta > 0
-        p_bias = [p_bias(1) + drift_w, p_bias(2), max(p_bias(3) - drift_w, 0)];
-    elseif lat_delta < 0
-        p_bias = [max(p_bias(1) - drift_w, 0), p_bias(2), p_bias(3) + drift_w];
-    end
-    p_bias = normalize_probs(p_bias);
-
-    p_final = normalize_probs((1 - alpha) * p_base + alpha * p_bias);
-    [~, imax] = max(p_final);
-    if imax == 1
-        pred = 'left';
-    elseif imax == 2
-        pred = 'straight';
-    else
-        pred = 'right';
-    end
-end
-
-function pred = predict_turn_no_db(x, y, idx0, v_in, base_probs, alpha, lane_shift_ref, slow_gain, drift_gain)
-    pred = '';
-    if any(isnan(v_in))
-        return;
-    end
-    if numel(base_probs) ~= 3
-        base_probs = [1, 1, 1];
-    end
-    p_base = normalize_probs(base_probs);
 
     [speed_ratio, lat_delta] = motion_cues(x, y, idx0, v_in);
     slow_w = clamp_value((1 - speed_ratio) * slow_gain, 0, 0.6);
@@ -341,17 +281,6 @@ function [speed_ratio, lat_delta] = motion_cues(x, y, idx0, v_in)
     lat_delta = lat_after - lat_before;
 end
 
-function p = normalize_probs(p)
-    s = sum(p);
-    if s > 0
-        p = p / s;
-    end
-end
-
-function v = clamp_value(v, vmin, vmax)
-    v = max(vmin, min(vmax, v));
-end
-
 function [left_idx, straight_idx, right_idx] = lane_turn_indices(lane)
     % Direction index:
     % 1=N, 2=NE, 3=E, 4=SE, 5=S, 6=SW, 7=W, 8=NW, 9=Stay
@@ -374,11 +303,23 @@ function [left_idx, straight_idx, right_idx] = lane_turn_indices(lane)
     end
 end
 
+function p = normalize_probs(p)
+    s = sum(p);
+    if s > 0
+        p = p / s;
+    end
+end
+
+function v = clamp_value(v, vmin, vmax)
+    v = max(vmin, min(vmax, v));
+end
+
 function tracks = load_tracks_by_scenario(fname)
     fid = fopen(fname, 'r');
     if fid < 0
-        error('Could not open test file: %s', fname);
+        error('Could not open %s', fname);
     end
+
     header = fgetl(fid); %#ok<NASGU>
     data = textscan(fid, '%s %f %f %f', 'Delimiter', ',', 'CollectOutput', false);
     fclose(fid);
@@ -386,6 +327,12 @@ function tracks = load_tracks_by_scenario(fname)
     scenarios = data{1};
     xs = data{3};
     ys = data{4};
+
+    % Support 3-column files: scenario,x,y (no timestamp).
+    if all(isnan(ys)) && ~all(isnan(data{2})) && ~all(isnan(data{3}))
+        xs = data{2};
+        ys = data{3};
+    end
 
     valid = ~isnan(xs) & ~isnan(ys);
     scenarios = scenarios(valid);
