@@ -15,6 +15,7 @@ Thumbs.db
 
 # Optional logs/outputs
 *.log
+conference_grid/paper_ieee.pdf
 
 # Keep CSV datasets/versioned outputs tracked
 !*.csv
