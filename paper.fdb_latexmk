@@ -1,5 +1,5 @@
 # Fdb version 4
-["pdflatex"] 1772878116.30154 "d:/Running Project/gridBaru/paper.tex" "paper.pdf" "paper" 1772878117.07106 2
+["pdflatex"] 1772878313.51207 "d:/Running Project/gridBaru/paper.tex" "paper.pdf" "paper" 1772878317.47553 2
   "d:/Library/texlive/2025/texmf-dist/fonts/enc/dvips/base/8r.enc" 1762691357 4850 80dc9bab7f31fb78a000ccfed0e27cab ""
   "d:/Library/texlive/2025/texmf-dist/fonts/map/fontname/texfonts.map" 1762692894 3524 cb3e574dea2d1052e39280babc910dc8 ""
   "d:/Library/texlive/2025/texmf-dist/fonts/tfm/adobe/courier/pcrr7t.tfm" 1762690351 960 379cc0019370a9e0208a0a3f949f847a ""
@@ -85,14 +85,14 @@
   "d:/Library/texlive/2025/texmf-var/fonts/map/pdftex/updmap/pdftex.map" 1762705173 5482380 aebac7edfbf90cb48fbc9d3a08800a84 ""
   "d:/Library/texlive/2025/texmf-var/web2c/pdftex/pdflatex.fmt" 1762705550 2286011 8aa394f3fd2ed54f3a201c51bbac0ee0 ""
   "d:/Library/texlive/2025/texmf.cnf" 1762705093 713 e69b156964470283e0530f5060668171 ""
-  "d:/Running Project/gridBaru/paper.tex" 1772878043 21342 1b487c2584cb2eb01b4941ebeecf452f ""
+  "d:/Running Project/gridBaru/paper.tex" 1772878308 22241 ac7b2b2ee12e1fb1dcded94df4ebdd39 ""
   "figs/accuracy_bar.pdf" 1772878024 31378 7bbb2148119e84ca5ae469fd17b217aa ""
   "figs/confusion_4way.pdf" 1772878021 29369 6f0e2ce1b59095177ffca7f12e9cf21a ""
   "figs/confusion_t.pdf" 1772878022 29307 45c2fae531f74fc5e1ff47f23d3032c4 ""
   "figs/confusion_y.pdf" 1772878023 25258 22aa47bec1208707c777f64dfb46f1a6 ""
-  "paper.aux" 1772878116 5238 b1c84b728f1adaaa7beb310937f04bdb "pdflatex"
-  "paper.out" 1772878116 5078 3fdfae82a6c226b6dcb8e4beefa333ca "pdflatex"
-  "paper.tex" 1772878043 21342 1b487c2584cb2eb01b4941ebeecf452f ""
+  "paper.aux" 1772878317 5238 20d3769a14350007924209d48437d0d5 "pdflatex"
+  "paper.out" 1772878317 5078 3fdfae82a6c226b6dcb8e4beefa333ca "pdflatex"
+  "paper.tex" 1772878308 22241 ac7b2b2ee12e1fb1dcded94df4ebdd39 ""
   (generated)
   "paper.aux"
   "paper.log"
