@@ -302,5 +302,26 @@ Pengujian ini mensimulasikan kondisi tanpa basis probabilitas (tidak ada data pe
 
 \section{Kesimpulan}
 Prediksi belok di persimpangan tidak cukup hanya mengandalkan heading dan kecepatan rata-rata. Pendekatan berbasis perilaku yang memanfaatkan perlambatan dan pergeseran lateral memberikan keputusan yang lebih konsisten. Ke depan, integrasi data nyata dan kalibrasi parameter perilaku menjadi langkah penting untuk meningkatkan generalisasi.
+Confusion Matrix per skenario (4‑Way, T, Y)
+Menunjukkan salah‑benar prediksi kiri/lurus/kanan. Ini langsung menguatkan klaim akurasi manuver.
 
+Akurasi vs Parameter
+Grafik garis untuk variasi g_s, g_d, dan alpha (mis. 0.2–0.9).
+Ini cocok untuk “Pengujian pengaruh variabel”.
+
+Akurasi dengan/ tanpa Pbase
+Bar chart dua kolom: “Dengan p_base” vs “Tanpa p_base” (mode heuristic‑only).
+Ini mendukung bagian “pengujian tanpa Pbase”.
+
+Speed Ratio & Drift vs Prediksi
+Scatter plot r_v vs Δ_lat dengan warna label prediksi/aktual.
+Ini menunjukkan bagaimana sinyal perilaku membedakan belok/lurus.
+
+Trajectory Overlay di Persimpangan
+Plot beberapa lintasan contoh dengan marker prediksi vs aktual di pusat persimpangan.
+Visual sederhana tapi sangat informatif.
+
+Akurasi per Lajur Masuk
+Bar chart akurasi untuk lane 1–4 (4‑way) / lane khusus (T, Y).
+Menunjukkan bias lajur jika ada.
 \end{document}
