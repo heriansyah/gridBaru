@@ -17,7 +17,7 @@ MIN_POINTS = 8;
 INERTIA_ALPHA = 0.9;
 LANE_SHIFT_REF_M = 1.2;
 
-SLOW_GAIN = 2;
+SLOW_GAIN = 1;
 DRIFT_GAIN = 0.6;
 ALLOW_NO_DB = true;      % allow heuristic-only prediction when DB is missing
 FORCE_NO_DB = false;     % set true to ignore DB even if it exists
