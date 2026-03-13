@@ -8,11 +8,13 @@ clc;
 SCRIPT_DIR = fileparts(mfilename('fullpath'));
 OUT_CSV = fullfile(SCRIPT_DIR, 'test_intersection_4way3.csv');
 
-DURATION_S = 40;
+GRID_SIZE_M = 10.0;
+APPROACH_LEN_M = 400;
+TARGET_MEAN_SPEED_MPS = 6.5;
+DURATION_S = round((2 * APPROACH_LEN_M) / TARGET_MEAN_SPEED_MPS);
 DT = 1.0;
 TIMES = (0:DT:DURATION_S)';
 
-APPROACH_LEN_M = 200;
 TURN_RADIUS_HINT = 20;
 
 % 100 scenarios (balanced across approaches/turns as much as possible).
@@ -58,7 +60,9 @@ for i = 1:size(rows, 1)
 end
 fclose(fid);
 
-fprintf('Generated 10 test scenarios: %s\n', OUT_CSV);
+fprintf('Generated %d test scenarios: %s\n', N_SCENARIOS, OUT_CSV);
+fprintf('Approach length: %.1f m (~%.1f grids), duration: %d s\n', ...
+    APPROACH_LEN_M, APPROACH_LEN_M / GRID_SIZE_M, DURATION_S);
 
 
 function rows = append_rows(rows, scenario, times, xy)
@@ -105,14 +109,18 @@ function xy = generate_route_4way(approach, maneuver, times, approach_len, turn_
     p_in = center - u_in * turn_radius_hint + lane_offset;
     p_out = center + u_out * turn_radius_hint + lane_offset;
 
+    n_straight_pts = max(260, round(1.8 * approach_len));
+    n_seg_pts = max(120, round(0.8 * approach_len));
+    n_bez_pts = max(80, round(3.5 * turn_radius_hint));
+
     if strcmpi(maneuver, 'straight')
-        base = [linspace(p_start(1), p_end(1), 260)', linspace(p_start(2), p_end(2), 260)'];
+        base = [linspace(p_start(1), p_end(1), n_straight_pts)', linspace(p_start(2), p_end(2), n_straight_pts)'];
     else
-        seg1 = [linspace(p_start(1), p_in(1), 120)', linspace(p_start(2), p_in(2), 120)'];
+        seg1 = [linspace(p_start(1), p_in(1), n_seg_pts)', linspace(p_start(2), p_in(2), n_seg_pts)'];
         c1 = p_in + u_in * 10;
         c2 = p_out - u_out * 10;
-        bez = bezier2d(p_in, c1, c2, p_out, 80);
-        seg2 = [linspace(p_out(1), p_end(1), 120)', linspace(p_out(2), p_end(2), 120)'];
+        bez = bezier2d(p_in, c1, c2, p_out, n_bez_pts);
+        seg2 = [linspace(p_out(1), p_end(1), n_seg_pts)', linspace(p_out(2), p_end(2), n_seg_pts)'];
         base = [seg1; bez; seg2];
     end
 
@@ -129,6 +137,11 @@ function xy = generate_route_4way(approach, maneuver, times, approach_len, turn_
     T = t(end);
     n = numel(t);
     s_lin = linspace(0, route_len, n)';
+    early_start_m = min(approach_len, 320);
+    early_end_m = 60;
+    early_den = max(early_start_m - early_end_m, 1);
+    dist_to_center_lin = max(0, s_center - s_lin);
+    early_progress_lin = 1 - max(0, min(1, (dist_to_center_lin - early_end_m) / early_den));
 
     v_nom = route_len / max(T, 1e-6);
 
@@ -136,9 +149,10 @@ function xy = generate_route_4way(approach, maneuver, times, approach_len, turn_
     slow_amp = 0.35;
     slow_sigma = 25;
     if strcmpi(maneuver, 'straight')
-        slow_profile = ones(n, 1);
+        slow_profile = (1 - 0.05 * early_progress_lin) .* (1 - 0.05 * exp(-((s_lin - s_center) / 35).^2));
     else
-        slow_profile = 1 - slow_amp * exp(-((s_lin - s_center) / slow_sigma).^2);
+        slow_profile = (1 - slow_amp * exp(-((s_lin - s_center) / slow_sigma).^2)) .* ...
+                       (1 - 0.12 * early_progress_lin);
     end
 
     if with_noise
@@ -171,7 +185,12 @@ function xy = generate_route_4way(approach, maneuver, times, approach_len, turn_
     else
         shift_sign = 0.0;
     end
-    shift = shift_sign * lane_shift * (0.5 * (1 + tanh((s_target - s_center) / shift_sigma)));
+    near_shift_gate = 0.5 * (1 + tanh((s_target - s_center) / shift_sigma));
+    dist_to_center_target = max(0, s_center - s_target);
+    early_progress_target = 1 - max(0, min(1, (dist_to_center_target - early_end_m) / early_den));
+    early_shift_ratio = 0.35;
+    shift_profile = early_shift_ratio * early_progress_target + (1 - early_shift_ratio) * near_shift_gate;
+    shift = shift_sign * lane_shift * shift_profile;
 
     if abs(shift_sign) > 0
         gx = gradient(x);

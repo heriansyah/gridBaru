@@ -4,18 +4,20 @@ clc;
 % ------------------------------------------------------------
 % SmartGrid3 synthetic generator (4-way only for phase-1)
 % - Grid size: 10m
-% - Approach length to center: 200m (20 grids)
+% - Approach length to center: 400m (40 grids)
 % - Training maneuver distribution per approach: 50/30/20
 % ------------------------------------------------------------
 SCRIPT_DIR = fileparts(mfilename('fullpath'));
 OUT_CSV = fullfile(SCRIPT_DIR, 'custom_trajectories3.csv');
 OUT_SUMMARY = fullfile(SCRIPT_DIR, 'custom_trajectories3_summary.txt');
 
-DURATION_S = 50;
+GRID_SIZE_M = 10.0;
+APPROACH_LEN_M = 400;        % 40 grids with 10 m grid size
+TARGET_MEAN_SPEED_MPS = 6.5; % keep synthetic speed realistic despite longer route
+DURATION_S = round((2 * APPROACH_LEN_M) / TARGET_MEAN_SPEED_MPS);
 DT = 1.0;
 TIMES = (0:DT:DURATION_S)';
 
-APPROACH_LEN_M = 200;  % 20 grids with 10m grid size
 TURN_RADIUS_HINT = 20;
 
 P_LEFT = 0.50;
@@ -41,7 +43,8 @@ approaches = {'south', 'north', 'west', 'east'};
 
 fprintf('=== GENERATE SYNTHETIC 4-WAY DATA (SMARTGRID3) ===\n');
 fprintf('Duration: %d s, dt: %.1f s\n', DURATION_S, DT);
-fprintf('Approach length: %.1f m (~%.1f grids)\n', APPROACH_LEN_M, APPROACH_LEN_M/10);
+fprintf('Approach length: %.1f m (~%.1f grids)\n', APPROACH_LEN_M, APPROACH_LEN_M / GRID_SIZE_M);
+fprintf('Target mean speed: %.2f m/s\n', TARGET_MEAN_SPEED_MPS);
 
 n_left = round(N_TRAIN_PER_APPROACH * P_LEFT);
 n_straight = round(N_TRAIN_PER_APPROACH * P_STRAIGHT);
@@ -109,6 +112,8 @@ if fid > 0
     fprintf(fid, 'Duration(s): %d\n', DURATION_S);
     fprintf(fid, 'dt(s): %.1f\n', DT);
     fprintf(fid, 'Approach length to center (m): %.1f\n', APPROACH_LEN_M);
+    fprintf(fid, 'Grid size (m): %.1f\n', GRID_SIZE_M);
+    fprintf(fid, 'Target mean speed (m/s): %.2f\n', TARGET_MEAN_SPEED_MPS);
     fprintf(fid, 'Train per approach: %d\n', N_TRAIN_PER_APPROACH);
     fprintf(fid, 'Train left/straight/right per approach: %d/%d/%d\n', n_left, n_straight, n_right);
     fprintf(fid, 'Turn redlight probability (left/right): %.2f\n', P_TURN_REDLIGHT);
@@ -159,7 +164,7 @@ function xy = generate_route_4way(approach, maneuver, times, approach_len, turn_
             error('Unknown approach: %s', approach);
     end
 
-    % Start point is 200m from center in incoming direction opposite
+    % Start point is "approach_len" away from center in incoming direction opposite.
     p_start = center - u_in * approach_len + lane_offset;
 
     % Outgoing direction by maneuver
@@ -179,14 +184,18 @@ function xy = generate_route_4way(approach, maneuver, times, approach_len, turn_
     p_in = center - u_in * turn_radius_hint + lane_offset;
     p_out = center + u_out * turn_radius_hint + lane_offset;
 
+    n_straight_pts = max(320, round(2.0 * approach_len));
+    n_seg_pts = max(140, round(0.9 * approach_len));
+    n_bez_pts = max(90, round(4.0 * turn_radius_hint));
+
     if strcmpi(maneuver, 'straight')
-        base = [linspace(p_start(1), p_end(1), 320)', linspace(p_start(2), p_end(2), 320)'];
+        base = [linspace(p_start(1), p_end(1), n_straight_pts)', linspace(p_start(2), p_end(2), n_straight_pts)'];
     else
-        seg1 = [linspace(p_start(1), p_in(1), 140)', linspace(p_start(2), p_in(2), 140)'];
+        seg1 = [linspace(p_start(1), p_in(1), n_seg_pts)', linspace(p_start(2), p_in(2), n_seg_pts)'];
         c1 = p_in + u_in * 10;
         c2 = p_out - u_out * 10;
-        bez = bezier2d(p_in, c1, c2, p_out, 90);
-        seg2 = [linspace(p_out(1), p_end(1), 140)', linspace(p_out(2), p_end(2), 140)'];
+        bez = bezier2d(p_in, c1, c2, p_out, n_bez_pts);
+        seg2 = [linspace(p_out(1), p_end(1), n_seg_pts)', linspace(p_out(2), p_end(2), n_seg_pts)'];
         base = [seg1; bez; seg2];
     end
 
@@ -203,6 +212,11 @@ function xy = generate_route_4way(approach, maneuver, times, approach_len, turn_
     T = t(end);
     n = numel(t);
     s_lin = linspace(0, route_len, n)';
+    early_start_m = min(approach_len, 320); % begin behavior adaptation far from center
+    early_end_m = 60;                       % full commitment when near intersection
+    early_den = max(early_start_m - early_end_m, 1);
+    dist_to_center_lin = max(0, s_center - s_lin);
+    early_progress_lin = 1 - max(0, min(1, (dist_to_center_lin - early_end_m) / early_den));
 
     v_nom = route_len / max(T, 1e-6);
 
@@ -214,7 +228,8 @@ function xy = generate_route_4way(approach, maneuver, times, approach_len, turn_
     if strcmpi(maneuver, 'straight')
         mode = lower(behavior_mode);
         if strcmp(mode, 'cautious')
-            slow_profile = 1 - 0.28 * exp(-((s_lin - s_center) / 28).^2);
+            slow_profile = (1 - 0.28 * exp(-((s_lin - s_center) / 28).^2)) .* ...
+                           (1 - 0.12 * early_progress_lin);
         elseif strcmp(mode, 'redlight')
             stop_shift = 0.0;
             if with_noise
@@ -225,11 +240,12 @@ function xy = generate_route_4way(approach, maneuver, times, approach_len, turn_
             dip = exp(-((s_lin - s_stop) / 6).^2);
             slow_profile = (1 - 0.75 * gate) .* (1 - 0.70 * dip);
             restart_boost = 1 + 0.20 * 0.5 * (1 + tanh((s_lin - (s_stop + 12)) / 8));
-            slow_profile = slow_profile .* restart_boost;
+            slow_profile = slow_profile .* restart_boost .* (1 - 0.10 * early_progress_lin);
             min_speed = 0.2;
         else
             % Even "normal straight" has mild caution near crossing.
-            slow_profile = 1 - 0.08 * exp(-((s_lin - s_center) / 35).^2);
+            slow_profile = (1 - 0.08 * exp(-((s_lin - s_center) / 35).^2)) .* ...
+                           (1 - 0.05 * early_progress_lin);
         end
     else
         mode = lower(behavior_mode);
@@ -243,12 +259,13 @@ function xy = generate_route_4way(approach, maneuver, times, approach_len, turn_
             dip = exp(-((s_lin - s_stop) / 6).^2);
             slow_profile = (1 - 0.72 * gate) .* (1 - 0.65 * dip);
             restart_boost = 1 + 0.18 * 0.5 * (1 + tanh((s_lin - (s_stop + 10)) / 8));
-            slow_profile = slow_profile .* restart_boost;
+            slow_profile = slow_profile .* restart_boost .* (1 - 0.16 * early_progress_lin);
             min_speed = 0.2;
         else
             slow_amp = 0.35;
             slow_sigma = 25;
-            slow_profile = 1 - slow_amp * exp(-((s_lin - s_center) / slow_sigma).^2);
+            slow_profile = (1 - slow_amp * exp(-((s_lin - s_center) / slow_sigma).^2)) .* ...
+                           (1 - 0.14 * early_progress_lin);
         end
     end
     slow_profile = max(0.05, slow_profile);
@@ -283,7 +300,12 @@ function xy = generate_route_4way(approach, maneuver, times, approach_len, turn_
     else
         shift_sign = 0.0;
     end
-    shift = shift_sign * lane_shift * (0.5 * (1 + tanh((s_target - s_center) / shift_sigma)));
+    near_shift_gate = 0.5 * (1 + tanh((s_target - s_center) / shift_sigma));
+    dist_to_center_target = max(0, s_center - s_target);
+    early_progress_target = 1 - max(0, min(1, (dist_to_center_target - early_end_m) / early_den));
+    early_shift_ratio = 0.35;
+    shift_profile = early_shift_ratio * early_progress_target + (1 - early_shift_ratio) * near_shift_gate;
+    shift = shift_sign * lane_shift * shift_profile;
 
     if abs(shift_sign) > 0
         gx = gradient(x);

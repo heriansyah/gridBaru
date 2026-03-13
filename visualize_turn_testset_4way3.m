@@ -1,5 +1,6 @@
 clear;
-clc;
+% Keep previous eval statistics visible in Command Window.
+% clc;
 close all;
 
 % ------------------------------------------------------------
@@ -16,7 +17,7 @@ INERTIA_ALPHA = 0.7;  % 0..1, higher => stronger bias to motion cues
 LANE_SHIFT_REF_M = 1.2;
 SLOW_GAIN = 1.0;
 DRIFT_GAIN = 0.6;
-PAUSE_PER_SCENARIO = true;  % wait for key press after each scenario
+PAUSE_PER_SCENARIO = false; % autoplay all scenarios when called from eval
 
 if ~exist(CSV_FILE, 'file')
     error('File not found: %s. Run generate_turn_testset_4way3.m first.', CSV_FILE);

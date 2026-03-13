@@ -14,14 +14,25 @@ INTERSECTION_RADIUS_M = 25;
 PRE_POST_WINDOW = 12;
 TURN_ANGLE_THRESH_DEG = 35;
 MIN_POINTS = 8;
-INERTIA_ALPHA = 0.5;
+INERTIA_ALPHA = 0.3;
 LANE_SHIFT_REF_M = 1.2;
 
 SLOW_GAIN = 2;
 DRIFT_GAIN = 0.6;
 ALLOW_NO_DB = true;      % allow heuristic-only prediction when DB is missing
-FORCE_NO_DB = true;     % set true to ignore DB even if it exists
-NO_DB_BASE = [0.25, 0.5, 0.25]; % left/straight/right prior (no training)
+FORCE_NO_DB = false;     % set true to ignore DB even if it exists
+NO_DB_BASE = [1/3, 1/3, 1/3]; % neutral prior for fallback heuristic
+ENABLE_VISUALIZATION = true; % visualize directly in this eval script
+ANIM_PAUSE_SEC = 0.035;
+ANIM_TAIL_LEN = 18;
+ANIM_PAUSE_BETWEEN_SCENARIO_SEC = 0.20;
+ANIM_PRED_DIST_M = 40;
+ANIM_OVERLAP_OFFSET_M = 1.3;
+
+% Prediction is only allowed when distance-to-center is inside this range.
+PRED_START_DIST_M = 120; % start prediction when vehicle is this far (or closer) to center
+PRED_END_DIST_M = 20;    % stop prediction window near center
+PRED_PICK_POLICY = 'first'; % {'first','last','closest_to_end'}
 
 if ~exist(TEST_FILE, 'file')
     error('Test file not found: %s', TEST_FILE);
@@ -40,12 +51,19 @@ else
 end
 fprintf('Radius: %.1f m, Window: %d, Angle thresh: %.1f deg\n\n', ...
     INTERSECTION_RADIUS_M, PRE_POST_WINDOW, TURN_ANGLE_THRESH_DEG);
+fprintf('Prediction distance range: %.1f -> %.1f m (policy=%s)\n\n', ...
+    PRED_START_DIST_M, PRED_END_DIST_M, PRED_PICK_POLICY);
 
 tracks = load_tracks_by_scenario(TEST_FILE);
 if use_db
     db = load_database(DB_FOLDER);
 else
     db = cell(4, 1);
+end
+if ENABLE_VISUALIZATION
+    viz = init_eval_visualization();
+else
+    viz = [];
 end
 
 labels = {'left', 'straight', 'right'};
@@ -55,6 +73,7 @@ correct = 0;
 skipped = 0;
 db_hits = 0;
 no_db_used = 0;
+pred_range_miss = 0;
 
 for s = 1:numel(tracks)
     xy = tracks{s}.xy;
@@ -66,47 +85,70 @@ for s = 1:numel(tracks)
     x = xy(:, 1);
     y = xy(:, 2);
     d = hypot(x, y);
-    [~, idx0] = min(d);
+    [~, idx_center] = min(d);
 
-    i1 = max(1, idx0 - PRE_POST_WINDOW);
-    i2 = min(numel(x), idx0 + PRE_POST_WINDOW);
+    [idx_pred, pred_range_mask] = choose_prediction_index( ...
+        d, idx_center, PRED_START_DIST_M, PRED_END_DIST_M, PRED_PICK_POLICY);
+    if isnan(idx_pred)
+        skipped = skipped + 1;
+        pred_range_miss = pred_range_miss + 1;
+        continue;
+    end
 
-    v_in = mean_vec(x, y, i1, idx0);
-    v_out = mean_vec(x, y, idx0, i2);
-    if any(isnan(v_in)) || any(isnan(v_out))
+    i1 = max(1, idx_center - PRE_POST_WINDOW);
+    i2 = min(numel(x), idx_center + PRE_POST_WINDOW);
+
+    v_in_center = mean_vec(x, y, i1, idx_center);
+    v_out = mean_vec(x, y, idx_center, i2);
+    if any(isnan(v_in_center)) || any(isnan(v_out))
         skipped = skipped + 1;
         continue;
     end
 
-    heading = mod(atan2(v_in(1), v_in(2)) * 180 / pi, 360);
+    ip1 = max(1, idx_pred - PRE_POST_WINDOW);
+    ip2 = idx_pred;
+    v_in_pred = mean_vec(x, y, ip1, ip2);
+    if any(isnan(v_in_pred))
+        skipped = skipped + 1;
+        continue;
+    end
+
+    heading = mod(atan2(v_in_pred(1), v_in_pred(2)) * 180 / pi, 360);
     lane = lane_from_heading(heading);
 
-    actual = turn_from_vectors(v_in, v_out, TURN_ANGLE_THRESH_DEG);
+    actual = turn_from_vectors(v_in_center, v_out, TURN_ANGLE_THRESH_DEG);
     if isempty(actual)
         skipped = skipped + 1;
         continue;
     end
 
-    % Use closest-to-center point as intersection grid cell.
-    gx = floor(x(idx0) / GRID_SIZE) + 1;
-    gy = floor(y(idx0) / GRID_SIZE) + 1;
+    % Use prediction-range point as the prediction grid cell.
+    gx = floor(x(idx_pred) / GRID_SIZE) + 1;
+    gy = floor(y(idx_pred) / GRID_SIZE) + 1;
     gid = int32((gy - 1) * 2000 + (gx - 1));
 
     pred = '';
+    p_base = [NaN, NaN, NaN];
+    p_bias = [NaN, NaN, NaN];
+    p_final = [NaN, NaN, NaN];
+    pred_mode = 'none';
     if use_db
-        pred = predict_turn_with_inertia( ...
-            db{lane}, gid, lane, x, y, idx0, v_in, ...
+        [pred, p_base, p_bias, p_final] = predict_turn_with_inertia( ...
+            db{lane}, gid, lane, x, y, idx_pred, v_in_pred, ...
             INERTIA_ALPHA, LANE_SHIFT_REF_M, SLOW_GAIN, DRIFT_GAIN);
         if isempty(pred)
-            % Fallback: search any point within radius that exists in DB.
-            in_mask = d <= INTERSECTION_RADIUS_M;
-            if any(in_mask)
-                gx2 = floor(x(in_mask) / GRID_SIZE) + 1;
-                gy2 = floor(y(in_mask) / GRID_SIZE) + 1;
+            % Fallback: search any grid inside allowed prediction range.
+            cand_idx = find(pred_range_mask);
+            if strcmpi(PRED_PICK_POLICY, 'last')
+                cand_idx = flipud(cand_idx(:));
+            end
+            if ~isempty(cand_idx)
+                gx2 = floor(x(cand_idx) / GRID_SIZE) + 1;
+                gy2 = floor(y(cand_idx) / GRID_SIZE) + 1;
                 gids = int32((gy2 - 1) * 2000 + (gx2 - 1));
-                for k = 1:numel(gids)
-                    pred = predict_turn_with_inertia( ...
-                        db{lane}, gids(k), lane, x, y, idx0, v_in, ...
+                for k = 1:numel(cand_idx)
+                    [pred, p_base, p_bias, p_final] = predict_turn_with_inertia( ...
+                        db{lane}, gids(k), lane, x, y, cand_idx(k), v_in_pred, ...
                         INERTIA_ALPHA, LANE_SHIFT_REF_M, SLOW_GAIN, DRIFT_GAIN);
                     if ~isempty(pred)
                         break;
@@ -116,15 +158,17 @@ for s = 1:numel(tracks)
         end
         if ~isempty(pred)
             db_hits = db_hits + 1;
+            pred_mode = 'db+inertia';
         end
     end
 
     if isempty(pred) && ALLOW_NO_DB
-        pred = predict_turn_no_db( ...
-            x, y, idx0, v_in, NO_DB_BASE, INERTIA_ALPHA, ...
+        [pred, p_base, p_bias, p_final] = predict_turn_no_db( ...
+            x, y, idx_pred, v_in_pred, NO_DB_BASE, INERTIA_ALPHA, ...
             LANE_SHIFT_REF_M, SLOW_GAIN, DRIFT_GAIN);
         if ~isempty(pred)
             no_db_used = no_db_used + 1;
+            pred_mode = 'heuristic';
         end
     end
 
@@ -143,6 +187,13 @@ for s = 1:numel(tracks)
 
     fprintf('Seg %2d | %-24s | lane=%d | actual=%s | pred=%s\n', ...
         s, tracks{s}.scenario, lane, actual, pred);
+    if ENABLE_VISUALIZATION
+        animate_eval_result( ...
+            viz, x, y, idx_center, idx_pred, s, numel(tracks), tracks{s}.scenario, ...
+            lane, actual, pred, p_base, p_bias, p_final, pred_mode, ...
+            PRED_START_DIST_M, PRED_END_DIST_M, ANIM_PAUSE_SEC, ANIM_TAIL_LEN, ...
+            ANIM_PAUSE_BETWEEN_SCENARIO_SEC, ANIM_PRED_DIST_M, ANIM_OVERLAP_OFFSET_M);
+    end
 end
 
 fprintf('\n=== SUMMARY ===\n');
@@ -154,12 +205,45 @@ if ALLOW_NO_DB
     fprintf('DB hits: %d\n', db_hits);
     fprintf('Heuristic-only: %d\n', no_db_used);
 end
+fprintf('Skipped (outside prediction range): %d\n', pred_range_miss);
 fprintf('\nConfusion matrix (rows=actual, cols=pred):\n');
 fprintf('           left  straight  right\n');
 for i = 1:3
     fprintf('%9s  %4d    %4d    %4d\n', labels{i}, conf(i, 1), conf(i, 2), conf(i, 3));
 end
 
+function [idx_pred, mask_pred] = choose_prediction_index(d, idx_center, pred_start_m, pred_end_m, pick_policy)
+    idx_pred = NaN;
+    n = numel(d);
+    mask_pred = false(n, 1);
+    if n < 2 || idx_center < 1 || idx_center > n
+        return;
+    end
+
+    if pred_start_m < pred_end_m
+        t = pred_start_m;
+        pred_start_m = pred_end_m;
+        pred_end_m = t;
+    end
+
+    incoming_idx = (1:idx_center)';
+    d_in = d(incoming_idx);
+    in_range = (d_in <= pred_start_m) & (d_in >= pred_end_m);
+    mask_pred(incoming_idx(in_range)) = true;
+    cand = find(mask_pred);
+    if isempty(cand)
+        return;
+    end
+
+    if strcmpi(pick_policy, 'last')
+        idx_pred = cand(end);
+    elseif strcmpi(pick_policy, 'closest_to_end')
+        [~, k] = min(abs(d(cand) - pred_end_m));
+        idx_pred = cand(k);
+    else
+        idx_pred = cand(1); % first point entering prediction range
+    end
+end
 
 function v = mean_vec(x, y, i1, i2)
     if i2 <= i1
@@ -173,6 +257,200 @@ function v = mean_vec(x, y, i1, i2)
         return;
     end
     v = [mean(dx), mean(dy)];
+end
+
+function viz = init_eval_visualization()
+    fig = figure('Name', 'Eval Intersection 4-Way Visualization', ...
+        'NumberTitle', 'off', ...
+        'Color', 'w', ...
+        'Position', [120 80 1320 700]);
+    tl = tiledlayout(fig, 1, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+
+    ax = nexttile(tl, 1);
+    hold(ax, 'on');
+    axis(ax, 'equal');
+    grid(ax, 'on');
+    xlabel(ax, 'X (m)');
+    ylabel(ax, 'Y (m)');
+
+    if exist('topology_4way3.m', 'file') == 2
+        topo = topology_4way3();
+        plot(topo.road_poly, 'FaceColor', [0.92 0.92 0.92], 'EdgeColor', [0.25 0.25 0.25]);
+        for k = 1:numel(topo.lane_markings)
+            lm = topo.lane_markings{k};
+            plot(ax, lm(:, 1), lm(:, 2), '--', 'Color', [0.25 0.25 0.25], 'LineWidth', 1.0);
+        end
+        xlim(ax, topo.bounds(1:2));
+        ylim(ax, topo.bounds(3:4));
+    else
+        xlim(ax, [-300 300]);
+        ylim(ax, [-300 300]);
+    end
+
+    car_length = 4.4;
+    car_width = 1.8;
+    car_shape_local = [
+        -car_width/2, -car_length/2;
+         car_width/2, -car_length/2;
+         car_width/2,  car_length/2;
+        -car_width/2,  car_length/2
+    ];
+
+    h_center = plot(ax, 0, 0, 'p', 'MarkerFaceColor', 'y', ...
+        'MarkerEdgeColor', [0.2 0.2 0.2], 'MarkerSize', 12);
+    h_tail = plot(ax, NaN, NaN, 'b-', 'LineWidth', 1.8);
+    h_car = patch(ax, NaN, NaN, [0.1 0.35 0.9], ...
+        'FaceAlpha', 0.9, 'EdgeColor', [0 0 0], 'LineWidth', 1.0);
+    h_head = quiver(ax, NaN, NaN, NaN, NaN, 0, 'r', 'LineWidth', 2, 'MaxHeadSize', 2);
+    h_idx0 = plot(ax, NaN, NaN, 'y*', 'LineWidth', 1.6, 'MarkerSize', 11);
+    h_pred_pt = plot(ax, NaN, NaN, 'md', 'MarkerFaceColor', 'm', 'MarkerSize', 7);
+    h_pred = plot(ax, NaN, NaN, 'rx', 'LineWidth', 2.2, 'MarkerSize', 11);
+    h_actual = plot(ax, NaN, NaN, 'gs', 'MarkerFaceColor', 'g', 'MarkerSize', 8);
+    h_info = text(ax, 0.02, 0.98, '', 'Units', 'normalized', ...
+        'VerticalAlignment', 'top', 'FontSize', 9, ...
+        'BackgroundColor', [1 1 1], 'Margin', 6, 'EdgeColor', [0.6 0.6 0.6]);
+
+    legend(ax, [h_center, h_tail, h_car, h_idx0, h_pred_pt, h_pred, h_actual], ...
+        {'Center', 'Track', 'Vehicle', 'Closest point', 'Prediction point', 'Predicted', 'Actual'}, ...
+        'Location', 'northoutside', 'Orientation', 'horizontal');
+
+    ax_prob = nexttile(tl, 2);
+    hold(ax_prob, 'on');
+    grid(ax_prob, 'on');
+    xlabel(ax_prob, 'Class');
+    ylabel(ax_prob, 'Probability');
+    title(ax_prob, 'p\_base / p\_bias / p\_final');
+    xlim(ax_prob, [0.5 3.5]);
+    ylim(ax_prob, [0 1]);
+    set(ax_prob, 'XTick', 1:3, 'XTickLabel', {'left', 'straight', 'right'});
+    hb = bar(ax_prob, nan(3, 3), 'grouped');
+    hb(1).FaceColor = [0.2 0.45 0.95]; % p_base
+    hb(2).FaceColor = [0.95 0.55 0.2]; % p_bias
+    hb(3).FaceColor = [0.2 0.7 0.35];  % p_final
+    legend(ax_prob, {'p\_base', 'p\_bias', 'p\_final'}, 'Location', 'northoutside', ...
+        'Orientation', 'horizontal');
+    h_prob_note = text(ax_prob, 0.02, 0.98, '', 'Units', 'normalized', ...
+        'VerticalAlignment', 'top', 'FontSize', 9, ...
+        'BackgroundColor', [1 1 1], 'Margin', 6, 'EdgeColor', [0.6 0.6 0.6]);
+
+    viz = struct('ax', ax, ...
+        'h_tail', h_tail, ...
+        'h_car', h_car, ...
+        'h_head', h_head, ...
+        'h_idx0', h_idx0, ...
+        'h_pred_pt', h_pred_pt, ...
+        'h_pred', h_pred, ...
+        'h_actual', h_actual, ...
+        'h_info', h_info, ...
+        'car_shape_local', car_shape_local, ...
+        'ax_prob', ax_prob, ...
+        'hb_prob', hb, ...
+        'h_prob_note', h_prob_note);
+end
+
+function animate_eval_result(viz, x, y, idx_center, idx_pred, seg_idx, seg_total, scenario, lane, actual, pred, p_base, p_bias, p_final, pred_mode, pred_start_m, pred_end_m, pause_sec, tail_len, pause_between, pred_dist_m, overlap_offset_m)
+    p_base_plot = p_base;
+    p_bias_plot = p_bias;
+    p_final_plot = p_final;
+    if ~all(isfinite(p_base_plot))
+        p_base_plot = [0, 0, 0];
+    end
+    if ~all(isfinite(p_bias_plot))
+        p_bias_plot = [0, 0, 0];
+    end
+    if ~all(isfinite(p_final_plot))
+        p_final_plot = [0, 0, 0];
+    end
+
+    pred_xy = turn_marker_xy(lane, pred, pred_dist_m);
+    actual_xy = turn_marker_xy(lane, actual, pred_dist_m);
+    if all(isfinite(pred_xy)) && all(isfinite(actual_xy)) && norm(pred_xy - actual_xy) < 1e-6
+        pred_xy = pred_xy + [overlap_offset_m, overlap_offset_m];
+    end
+
+    set(viz.h_idx0, 'XData', x(idx_center), 'YData', y(idx_center));
+    set(viz.h_pred_pt, 'XData', x(idx_pred), 'YData', y(idx_pred));
+    set(viz.h_pred, 'XData', pred_xy(1), 'YData', pred_xy(2));
+    set(viz.h_actual, 'XData', actual_xy(1), 'YData', actual_xy(2));
+    set(viz.hb_prob(1), 'YData', p_base_plot(:)');
+    set(viz.hb_prob(2), 'YData', p_bias_plot(:)');
+    set(viz.hb_prob(3), 'YData', p_final_plot(:)');
+    set(viz.h_prob_note, 'String', sprintf([ ...
+        'mode: %s\n' ...
+        'pred range = [%.1f..%.1f] m\n' ...
+        'd(pred point)=%.1f m\n' ...
+        'p_base = [%.2f %.2f %.2f]\n' ...
+        'p_bias = [%.2f %.2f %.2f]\n' ...
+        'p_final= [%.2f %.2f %.2f]'], ...
+        pred_mode, ...
+        pred_start_m, pred_end_m, hypot(x(idx_pred), y(idx_pred)), ...
+        p_base(1), p_base(2), p_base(3), ...
+        p_bias(1), p_bias(2), p_bias(3), ...
+        p_final(1), p_final(2), p_final(3)));
+
+    n = numel(x);
+    for i = 1:n
+        s0 = max(1, i - tail_len);
+        set(viz.h_tail, 'XData', x(s0:i), 'YData', y(s0:i));
+
+        if i < n
+            dx = x(i + 1) - x(i);
+            dy = y(i + 1) - y(i);
+        else
+            dx = x(i) - x(i - 1);
+            dy = y(i) - y(i - 1);
+        end
+
+        theta = atan2(dy, dx);
+        R = [cos(theta), -sin(theta); sin(theta), cos(theta)];
+        car_world = (R * viz.car_shape_local')';
+        car_world(:, 1) = car_world(:, 1) + x(i);
+        car_world(:, 2) = car_world(:, 2) + y(i);
+
+        set(viz.h_car, 'XData', car_world(:, 1), 'YData', car_world(:, 2));
+
+        dir_norm = max(hypot(dx, dy), 1e-6);
+        ux = dx / dir_norm;
+        uy = dy / dir_norm;
+        set(viz.h_head, 'XData', x(i), 'YData', y(i), 'UData', ux * 6, 'VData', uy * 6);
+        set(viz.h_info, 'String', sprintf( ...
+            ['Seg %d/%d\n%s\nlane=%d\nactual=%s | pred=%s\n' ...
+             'pred range=[%.1f..%.1f] m, d(pred)=%.1f m\n' ...
+             'frame=%d/%d\np_base=[%.2f %.2f %.2f]\n' ...
+             'p_bias=[%.2f %.2f %.2f]\np_final=[%.2f %.2f %.2f]'], ...
+            seg_idx, seg_total, scenario, lane, actual, pred, ...
+            pred_start_m, pred_end_m, hypot(x(idx_pred), y(idx_pred)), i, n, ...
+            p_base(1), p_base(2), p_base(3), ...
+            p_bias(1), p_bias(2), p_bias(3), ...
+            p_final(1), p_final(2), p_final(3)));
+        title(viz.ax, sprintf('Eval Visualization | %s', scenario), 'Interpreter', 'none');
+        drawnow;
+        pause(pause_sec);
+    end
+
+    pause(pause_between);
+end
+
+function xy = turn_marker_xy(lane, turn_name, dist_m)
+    switch lane
+        case 1
+            u_in = [0, 1];
+        case 2
+            u_in = [1, 0];
+        case 3
+            u_in = [0, -1];
+        otherwise
+            u_in = [-1, 0];
+    end
+
+    if strcmpi(turn_name, 'left')
+        u_out = [-u_in(2), u_in(1)];
+    elseif strcmpi(turn_name, 'right')
+        u_out = [u_in(2), -u_in(1)];
+    else
+        u_out = u_in;
+    end
+    xy = dist_m * u_out;
 end
 
 function t = turn_from_vectors(v_in, v_out, thresh_deg)
@@ -236,8 +514,11 @@ function pred = predict_turn_from_db(map, gid, lane)
     end
 end
 
-function pred = predict_turn_with_inertia(map, gid, lane, x, y, idx0, v_in, alpha, lane_shift_ref, slow_gain, drift_gain)
+function [pred, p_base, p_bias, p_final] = predict_turn_with_inertia(map, gid, lane, x, y, idx0, v_in, alpha, lane_shift_ref, slow_gain, drift_gain)
     pred = '';
+    p_base = [NaN, NaN, NaN];
+    p_bias = [NaN, NaN, NaN];
+    p_final = [NaN, NaN, NaN];
     if ~isKey(map, gid)
         return;
     end
@@ -268,8 +549,11 @@ function pred = predict_turn_with_inertia(map, gid, lane, x, y, idx0, v_in, alph
     end
 end
 
-function pred = predict_turn_no_db(x, y, idx0, v_in, base_probs, alpha, lane_shift_ref, slow_gain, drift_gain)
+function [pred, p_base, p_bias, p_final] = predict_turn_no_db(x, y, idx0, v_in, base_probs, alpha, lane_shift_ref, slow_gain, drift_gain)
     pred = '';
+    p_base = [NaN, NaN, NaN];
+    p_bias = [NaN, NaN, NaN];
+    p_final = [NaN, NaN, NaN];
     if any(isnan(v_in))
         return;
     end
