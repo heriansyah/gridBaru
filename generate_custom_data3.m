@@ -23,6 +23,17 @@ P_STRAIGHT = 0.30;
 P_RIGHT = 0.20;
 N_TRAIN_PER_APPROACH = 10;   % total train runs = 40
 
+% Probabilitas kondisi lampu merah untuk manuver belok (left/right).
+P_TURN_REDLIGHT = 0.20;
+
+% Straight behavior mix (more realistic crossing behavior).
+P_STRAIGHT_NORMAL = 0.45;
+P_STRAIGHT_CAUTIOUS = 0.35;
+P_STRAIGHT_REDLIGHT = 0.20;
+if abs((P_STRAIGHT_NORMAL + P_STRAIGHT_CAUTIOUS + P_STRAIGHT_REDLIGHT) - 1.0) > 1e-9
+    error('Straight behavior probabilities must sum to 1.0');
+end
+
 TEST_APPROACH = 'south';
 TEST_MANEUVER = 'left';
 
@@ -38,6 +49,8 @@ n_right = N_TRAIN_PER_APPROACH - n_left - n_straight;
 
 rows = cell(0, 4);
 run_id = 0;
+straight_behavior_counts = struct('normal', 0, 'cautious', 0, 'redlight', 0);
+turn_redlight_counts = struct('left', 0, 'right', 0);
 
 for a = 1:numel(approaches)
     approach = approaches{a};
@@ -51,13 +64,31 @@ for a = 1:numel(approaches)
     for i = 1:numel(maneuvers)
         run_id = run_id + 1;
         mv = maneuvers{i};
-        xy = generate_route_4way(approach, mv, TIMES, APPROACH_LEN_M, TURN_RADIUS_HINT, true);
-        scenario = sprintf('Train_4way_%s_Run_%03d_%s', approach, i, mv);
+
+        behavior_mode = 'normal';
+        if strcmpi(mv, 'straight')
+            behavior_mode = sample_straight_mode( ...
+                P_STRAIGHT_NORMAL, P_STRAIGHT_CAUTIOUS, P_STRAIGHT_REDLIGHT);
+            straight_behavior_counts.(behavior_mode) = straight_behavior_counts.(behavior_mode) + 1;
+            scenario = sprintf('Train_4way_%s_Run_%03d_straight_%s', approach, i, behavior_mode);
+        elseif strcmpi(mv, 'left') || strcmpi(mv, 'right')
+            if rand() < P_TURN_REDLIGHT
+                behavior_mode = 'redlight';
+                turn_redlight_counts.(mv) = turn_redlight_counts.(mv) + 1;
+                scenario = sprintf('Train_4way_%s_Run_%03d_%s_redlight', approach, i, mv);
+            else
+                scenario = sprintf('Train_4way_%s_Run_%03d_%s', approach, i, mv);
+            end
+        else
+            scenario = sprintf('Train_4way_%s_Run_%03d_%s', approach, i, mv);
+        end
+
+        xy = generate_route_4way(approach, mv, TIMES, APPROACH_LEN_M, TURN_RADIUS_HINT, true, behavior_mode);
         rows = append_rows(rows, scenario, TIMES, xy);
     end
 end
 
-xy_test = generate_route_4way(TEST_APPROACH, TEST_MANEUVER, TIMES, APPROACH_LEN_M, TURN_RADIUS_HINT, false);
+xy_test = generate_route_4way(TEST_APPROACH, TEST_MANEUVER, TIMES, APPROACH_LEN_M, TURN_RADIUS_HINT, false, 'normal');
 rows = append_rows(rows, 'Test_4way_Veh_001_left', TIMES, xy_test);
 
 % Write CSV
@@ -80,6 +111,13 @@ if fid > 0
     fprintf(fid, 'Approach length to center (m): %.1f\n', APPROACH_LEN_M);
     fprintf(fid, 'Train per approach: %d\n', N_TRAIN_PER_APPROACH);
     fprintf(fid, 'Train left/straight/right per approach: %d/%d/%d\n', n_left, n_straight, n_right);
+    fprintf(fid, 'Turn redlight probability (left/right): %.2f\n', P_TURN_REDLIGHT);
+    fprintf(fid, 'Turn redlight counts (train only): left=%d, right=%d\n', ...
+        turn_redlight_counts.left, turn_redlight_counts.right);
+    fprintf(fid, 'Straight behavior distribution (train only): normal/cautious/redlight = %.2f/%.2f/%.2f\n', ...
+        P_STRAIGHT_NORMAL, P_STRAIGHT_CAUTIOUS, P_STRAIGHT_REDLIGHT);
+    fprintf(fid, 'Straight behavior counts (train only): normal=%d, cautious=%d, redlight=%d\n', ...
+        straight_behavior_counts.normal, straight_behavior_counts.cautious, straight_behavior_counts.redlight);
     fprintf(fid, 'Total train runs: %d\n', numel(approaches) * N_TRAIN_PER_APPROACH);
     fprintf(fid, 'Test trajectory: %s | approach=%s maneuver=%s\n', 'Test_4way_Veh_001_left', TEST_APPROACH, TEST_MANEUVER);
     fclose(fid);
@@ -96,7 +134,11 @@ function rows = append_rows(rows, scenario, times, xy)
     end
 end
 
-function xy = generate_route_4way(approach, maneuver, times, approach_len, turn_radius_hint, with_noise)
+function xy = generate_route_4way(approach, maneuver, times, approach_len, turn_radius_hint, with_noise, behavior_mode)
+    if nargin < 7 || isempty(behavior_mode)
+        behavior_mode = 'normal';
+    end
+
     center = [0, 0];
 
     % Direction vectors: "to center" for each approach
@@ -164,14 +206,52 @@ function xy = generate_route_4way(approach, maneuver, times, approach_len, turn_
 
     v_nom = route_len / max(T, 1e-6);
 
-    % Slowdown near intersection for turns.
-    slow_amp = 0.35;
-    slow_sigma = 25;
+    min_speed = 0.8;
+
+    % Slowdown profile:
+    % - straight: normal / cautious / redlight-stopgo
+    % - turns: normal turn slowdown, or redlight-stopgo before turning
     if strcmpi(maneuver, 'straight')
-        slow_profile = ones(n, 1);
+        mode = lower(behavior_mode);
+        if strcmp(mode, 'cautious')
+            slow_profile = 1 - 0.28 * exp(-((s_lin - s_center) / 28).^2);
+        elseif strcmp(mode, 'redlight')
+            stop_shift = 0.0;
+            if with_noise
+                stop_shift = 4.0 * randn();
+            end
+            s_stop = s_center + stop_shift;
+            gate = 0.5 * (tanh((s_lin - (s_stop - 10)) / 4) - tanh((s_lin - (s_stop + 10)) / 4));
+            dip = exp(-((s_lin - s_stop) / 6).^2);
+            slow_profile = (1 - 0.75 * gate) .* (1 - 0.70 * dip);
+            restart_boost = 1 + 0.20 * 0.5 * (1 + tanh((s_lin - (s_stop + 12)) / 8));
+            slow_profile = slow_profile .* restart_boost;
+            min_speed = 0.2;
+        else
+            % Even "normal straight" has mild caution near crossing.
+            slow_profile = 1 - 0.08 * exp(-((s_lin - s_center) / 35).^2);
+        end
     else
-        slow_profile = 1 - slow_amp * exp(-((s_lin - s_center) / slow_sigma).^2);
+        mode = lower(behavior_mode);
+        if strcmp(mode, 'redlight')
+            stop_shift = 0.0;
+            if with_noise
+                stop_shift = 3.0 * randn();
+            end
+            s_stop = s_center - 8 + stop_shift; % berhenti sedikit sebelum pusat
+            gate = 0.5 * (tanh((s_lin - (s_stop - 9)) / 4) - tanh((s_lin - (s_stop + 9)) / 4));
+            dip = exp(-((s_lin - s_stop) / 6).^2);
+            slow_profile = (1 - 0.72 * gate) .* (1 - 0.65 * dip);
+            restart_boost = 1 + 0.18 * 0.5 * (1 + tanh((s_lin - (s_stop + 10)) / 8));
+            slow_profile = slow_profile .* restart_boost;
+            min_speed = 0.2;
+        else
+            slow_amp = 0.35;
+            slow_sigma = 25;
+            slow_profile = 1 - slow_amp * exp(-((s_lin - s_center) / slow_sigma).^2);
+        end
     end
+    slow_profile = max(0.05, slow_profile);
 
     if with_noise
         v_nom = v_nom * (1 + 0.08 * randn());
@@ -182,7 +262,7 @@ function xy = generate_route_4way(approach, maneuver, times, approach_len, turn_
         speed = v_nom * slow_profile;
     end
 
-    speed = max(0.8, speed);
+    speed = max(min_speed, speed);
     ds = speed * mean(diff(t));
     s_target = cumsum([0; ds(1:end-1)]);
 
@@ -231,6 +311,20 @@ function xy = generate_route_4way(approach, maneuver, times, approach_len, turn_
     end
 
     xy = [x, y];
+end
+
+function mode = sample_straight_mode(p_normal, p_cautious, p_redlight)
+    r = rand();
+    if r < p_normal
+        mode = 'normal';
+    elseif r < p_normal + p_cautious
+        mode = 'cautious';
+    else
+        mode = 'redlight';
+    end
+    if p_redlight <= 0
+        mode = 'normal';
+    end
 end
 
 function pts = bezier2d(p0, p1, p2, p3, n)

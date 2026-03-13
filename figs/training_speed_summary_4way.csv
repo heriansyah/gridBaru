@@ -1,0 +1,6 @@
+group,count,mean_speed_mps,std_speed_mps
+left,20,7.800668,0.929049
+right,8,7.798825,0.934179
+straight-normal,1,8.000483,0.353516
+straight-cautious,8,8.000423,0.804485
+straight-redlight,3,8.000626,1.652681

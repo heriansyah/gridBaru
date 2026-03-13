@@ -1,0 +1,3 @@
+mode,accuracy,total,correct,skipped,db_used,heuristic_used
+with_pbase,67.000000,100,67,0,100,0
+without_pbase,100.000000,100,100,0,0,100

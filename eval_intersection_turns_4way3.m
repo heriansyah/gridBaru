@@ -14,13 +14,13 @@ INTERSECTION_RADIUS_M = 25;
 PRE_POST_WINDOW = 12;
 TURN_ANGLE_THRESH_DEG = 35;
 MIN_POINTS = 8;
-INERTIA_ALPHA = 0.9;
+INERTIA_ALPHA = 0.5;
 LANE_SHIFT_REF_M = 1.2;
 
-SLOW_GAIN = 1;
+SLOW_GAIN = 2;
 DRIFT_GAIN = 0.6;
 ALLOW_NO_DB = true;      % allow heuristic-only prediction when DB is missing
-FORCE_NO_DB = false;     % set true to ignore DB even if it exists
+FORCE_NO_DB = true;     % set true to ignore DB even if it exists
 NO_DB_BASE = [0.25, 0.5, 0.25]; % left/straight/right prior (no training)
 
 if ~exist(TEST_FILE, 'file')

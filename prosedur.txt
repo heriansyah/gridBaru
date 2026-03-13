@@ -1,0 +1,7 @@
+1. Plot data speed => plot_data_training_4way
+2. Pengujian Akurasi di file pengujian1.m atau eval_intersection_turns_4way3.m dst, tabel untuk membandingkan dengan metod lain,
+ tambah plot visualisasi peta 4way dengan legend
+3. pengaruh variabel2 : lakukan pengujian dengan mengubah nilai INERTIA_ALPHA, DRIFT_GAIN,SLOW_GAIN, INTERSECTION_RADIUS_M
+4. Pengujian Skenario dengan Lampu Merah:
+5. Tanpa P_base
+6. Testing Akurasi beberapa ratus meter ke depan 

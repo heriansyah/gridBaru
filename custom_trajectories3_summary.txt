@@ -4,5 +4,9 @@ dt(s): 1.0
 Approach length to center (m): 200.0
 Train per approach: 10
 Train left/straight/right per approach: 5/3/2
+Turn redlight probability (left/right): 0.20
+Turn redlight counts (train only): left=4, right=0
+Straight behavior distribution (train only): normal/cautious/redlight = 0.45/0.35/0.20
+Straight behavior counts (train only): normal=5, cautious=4, redlight=3
 Total train runs: 40
 Test trajectory: Test_4way_Veh_001_left | approach=south maneuver=left
